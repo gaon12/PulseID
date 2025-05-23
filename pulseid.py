@@ -9,7 +9,8 @@ import threading
 import random
 import secrets
 
-# Thread-safe lock for sequence generation\ n_lock = threading.Lock()
+# Thread-safe lock for sequence generation
+_lock = threading.Lock()
 _sequence = 0
 
 # 16-bit process-specific random instance ID (0–65535)
@@ -25,11 +26,18 @@ def _base58_encode(num: int, length: int) -> str:
     """
     Encodes an integer into a fixed-length Base58 string.
     """
-    s = []
-    for _ in range(length):
+    if num == 0:
+        return _ALPHABET[0] * length
+
+    s = [''] * length  # Pre-allocate list of the correct size
+    for i in range(length - 1, -1, -1): # Iterate from right to left
         num, rem = divmod(num, 58)
-        s.append(_ALPHABET[rem])
-    return ''.join(reversed(s))
+        s[i] = _ALPHABET[rem]
+        if num == 0 and i > 0: # Optimization: if num becomes 0, fill rest with ALPHABET[0]
+            for k in range(i -1, -1, -1):
+                s[k] = _ALPHABET[0]
+            break
+    return "".join(s)
 
 
 def generate_pulse_id() -> str:
@@ -66,3 +74,23 @@ if __name__ == "__main__":
     # Example usage: print five generated IDs
     for _ in range(5):
         print(generate_pulse_id())
+
+    # Benchmark PulseID generation
+    def benchmark_pulse_id(num_ids_to_generate: int):
+        """
+        Benchmarks the PulseID generation process.
+        """
+        print(f"\nBenchmarking PulseID generation for {num_ids_to_generate} IDs...")
+        start_time = time.time()
+
+        for _ in range(num_ids_to_generate):
+            generate_pulse_id()
+
+        end_time = time.time()
+        total_time = end_time - start_time
+        average_time_per_id = total_time / num_ids_to_generate if num_ids_to_generate > 0 else 0
+
+        print(f"Total time taken: {total_time:.4f} seconds")
+        print(f"Average time per ID: {average_time_per_id * 1e6:.2f} microseconds") # Convert to microseconds for readability
+
+    benchmark_pulse_id(100000)
