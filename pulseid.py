@@ -21,23 +21,54 @@ _VERSION = 0b0001
 # Base58 alphabet (omits 0, O, I, l for readability)
 _ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
+_BASE58_LENGTH = 21
+_ZERO_BASE58 = _ALPHABET[0] * _BASE58_LENGTH
+_BASE58_CHUNK_SIZE = 3
+_BASE58_CHUNK_BASE = 58 ** _BASE58_CHUNK_SIZE
+_BASE58_CHUNKS = (_BASE58_LENGTH + _BASE58_CHUNK_SIZE - 1) // _BASE58_CHUNK_SIZE
 
-def _base58_encode(num: int, length: int) -> str:
+
+def _build_chunk_lookup() -> tuple[str, ...]:
+    alphabet = _ALPHABET
+    base = 58
+    chunk_size = _BASE58_CHUNK_SIZE
+    lookup = [None] * _BASE58_CHUNK_BASE
+    for value in range(_BASE58_CHUNK_BASE):
+        v = value
+        chars = [''] * chunk_size
+        for i in range(chunk_size - 1, -1, -1):
+            v, rem = divmod(v, base)
+            chars[i] = alphabet[rem]
+        lookup[value] = ''.join(chars)
+    return tuple(lookup)
+
+
+_BASE58_CHUNK_LOOKUP = _build_chunk_lookup()
+_TIMESTAMP_MASK = (1 << 42) - 1
+_SEQUENCE_MASK = (1 << 20) - 1
+_RANDOM_BITS = 41
+_RANDOM_MASK = (1 << _RANDOM_BITS) - 1
+_VERSION_INSTANCE = ((_VERSION & 0xF) << 16) | _INSTANCE_ID
+_TIMESTAMP_SHIFT = 4 + 16
+
+_RAND_BITS = random.getrandbits
+_TIME_NS = time.time_ns
+
+
+def _encode_base58(num: int) -> str:
     """
     Encodes an integer into a fixed-length Base58 string.
     """
     if num == 0:
-        return _ALPHABET[0] * length
+        return _ZERO_BASE58
 
-    s = [''] * length  # Pre-allocate list of the correct size
-    for i in range(length - 1, -1, -1): # Iterate from right to left
-        num, rem = divmod(num, 58)
-        s[i] = _ALPHABET[rem]
-        if num == 0 and i > 0: # Optimization: if num becomes 0, fill rest with ALPHABET[0]
-            for k in range(i -1, -1, -1):
-                s[k] = _ALPHABET[0]
-            break
-    return "".join(s)
+    chunk_base = _BASE58_CHUNK_BASE
+    lookup = _BASE58_CHUNK_LOOKUP
+    chunks = [''] * _BASE58_CHUNKS
+    for i in range(_BASE58_CHUNKS - 1, -1, -1):
+        num, rem = divmod(num, chunk_base)
+        chunks[i] = lookup[rem]
+    return ''.join(chunks)
 
 
 def generate_pulse_id() -> str:
@@ -52,22 +83,19 @@ def generate_pulse_id() -> str:
         - 41 bits: Random suffix
     """
     global _sequence
+
+    rnd = _RAND_BITS(_RANDOM_BITS) & _RANDOM_MASK
     with _lock:
-        # 1) Timestamp (42 bits)
-        ms = int(time.time() * 1000) & ((1 << 42) - 1)
-        # 2) Sequence (20 bits)
-        _sequence = (_sequence + 1) & ((1 << 20) - 1)
-        # 3) Random suffix (41 bits)
-        rnd = random.getrandbits(41)
-        # 4) Bitwise composition (big-endian)
-        raw = ms
-        raw = (raw << 4) | (_VERSION & 0xF)
-        raw = (raw << 16) | _INSTANCE_ID
-        raw = (raw << 20) | _sequence
-        raw = (raw << 41) | rnd
+        ms = (_TIME_NS() // 1_000_000) & _TIMESTAMP_MASK
+        _sequence = (_sequence + 1) & _SEQUENCE_MASK
+        seq = _sequence
+
+    raw = (ms << _TIMESTAMP_SHIFT) | _VERSION_INSTANCE
+    raw = (raw << 20) | seq
+    raw = (raw << _RANDOM_BITS) | rnd
 
     # Encode to Base58 (21 characters)
-    return _base58_encode(raw, 21)
+    return _encode_base58(raw)
 
 
 if __name__ == "__main__":
